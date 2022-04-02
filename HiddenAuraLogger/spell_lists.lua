@@ -1,13 +1,16 @@
 local addon_name, addon_table = ...
 
+-- These spells will be filtered out when ignoring player spells.
 function addon_table:is_player_spell(spell_id)
   return self.player_spells[spell_id] or self.player_spells_manual[spell_id]
 end
 
+-- These spells are determined to be possible hidden auras for an encounter and are checked more urgently than unknown spell IDs.
 function addon_table:is_encounter_spell(encounter_id, spell_id)
   return self.encounter_spells[encounter_id] and self.encounter_spells[encounter_id][spell_id]
 end
 
+-- TODO: This should probably be configurable from within the addon.
 addon_table.player_spells_manual = {
   [356511] = true, -- Endless Duty
   [321382] = true, -- Shadowcore Oil
@@ -18,6 +21,9 @@ addon_table.player_spells_manual = {
 }
 
 -- Tables below this line are automatically generated and should not be manually edited.
+
+-- An automatically generated list of spells that are could be encounter related.
+-- To reduce space, this will only include recent raids.
 addon_table.encounter_spells = {
   -- Sepulcher of the First Ones
   [2512] = { -- Vigilant Guardian
@@ -217,6 +223,9 @@ addon_table.encounter_spells = {
   },
 }
 
+-- An automatically generated list of spells that are probably player related.
+-- Specifically, this is all spells that are flagged such that they might be hidden auras that
+-- also have either label 16 (class spells) or label 292 (commonly used by expansion systems).
 addon_table.player_spells = {
   [71] = true, -- Vanguard
   [698] = true, -- Ritual of Summoning

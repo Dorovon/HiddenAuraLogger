@@ -185,6 +185,8 @@ local function create_options()
     label:SetText(name)
   end
 
+  -- TODO: These edit boxes should be more user friendly when entering values.
+  -- Currently, you have to press enter to save the value, which is not intuitive.
   local function add_edit_box(name, option, callback)
     local function reset_value(f)
       f:SetNumber(db.config[f.option])
@@ -292,6 +294,7 @@ function event_handlers.COMBAT_LOG_EVENT_UNFILTERED()
   local _, event, _, _, _, _, _, dest_guid, _, _, _, spell_id = CombatLogGetCurrentEventInfo()
 
   if dest_guid == player_guid and event:sub(1, 10) == "SPELL_AURA" and not scanner.cleu_auras[spell_id] then
+    -- If there was a combat log event for this aura, this addon will begin to ignore it.
     scanner.cleu_auras[spell_id] = true
     if addon_table.active_auras[spell_id] then
       addon_table.active_auras[spell_id] = nil
