@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v1
         with:
-          fetch-depth: 500
+          fetch-depth: 0
 
       - name: Create Retail Package
         uses: BigWigsMods/packager@master
