@@ -1,0 +1,10 @@
+## Interface: 90200
+## Title: HiddenAuraLogger
+## Author: Dorovon
+## Version: 1.0.7
+## SavedVariables: HiddenAuraLoggerDB
+
+spell_lists.lua
+aura_display.lua
+log_display.lua
+main.lua
