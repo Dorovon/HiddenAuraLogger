@@ -1,0 +1,9 @@
+package-as: HiddenAuraLogger
+
+ignore:
+  - README.md
+  - LICENSE
+
+move-folders:
+  HiddenAuraLogger/HiddenAuraLogger: HiddenAuraLogger
+  
