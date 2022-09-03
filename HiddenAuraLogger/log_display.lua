@@ -1,6 +1,61 @@
 local addon_name, addon_table = ...
 local db
 
+local key_order = {
+  timestamp = 0,
+  event = 1,
+  spellId = 2,
+  name = 3,
+}
+
+local function dict_to_string(t)
+  local function compare_keys(a, b)
+    if key_order[a] and key_order[b] then
+      return key_order[a] < key_order[b]
+    elseif key_order[a] then
+      return true
+    elseif key_order[b] then
+      return false
+    else
+      return a < b
+    end
+  end
+
+  local function value_string(key, value)
+    if type(value) == "table" then
+      local str = ""
+      for k, v in pairs(value) do
+        if str ~= "" then
+          str = str .. "; "
+        end
+        str = str .. value_string(key .. "[" .. k .. "]" , v)
+      end
+      return str
+    else
+      return tostring(key) .. "=" .. tostring(value)
+    end
+  end
+
+  local str = ""
+  local keys = {}
+  for k, _ in pairs(t) do
+    keys[#keys + 1] = k
+  end
+  sort(keys, compare_keys)
+
+  for _, k in ipairs(keys) do
+    local v = value_string(k, t[k])
+    if v ~= "" then
+      if str ~= "" then
+        str = str .. "; "
+      end
+      str = str .. v
+    end
+  end
+
+  return str
+end
+
 local function get_cursor_pos()
   local x, y = GetCursorPosition()
   local scale = UIParent:GetEffectiveScale()
@@ -169,9 +224,9 @@ local function get_log_text(log)
   end
 
   text = text .. "\n# Hidden Aura Events\n"
-  text = text .. "timestamp; event; name; icon; count; dispelType; duration; expirationTime; source; isStealable; nameplateShowPersonal; spellId; canApplyAura; isBossDebuff; castByPlayer; nameplateShowAll; timeMod; ...\n"
+  -- text = text .. "timestamp; event; spellId; name; icon; count; dispelType; duration; expirationTime; source; isStealable; nameplateShowPersonal; spellId; canApplyAura; isBossDebuff; castByPlayer; nameplateShowAll; timeMod; ...\n"
   for _, event in ipairs(log.events) do
-    text = text .. event .. "\n"
+    text = text .. dict_to_string(event) .. "\n"
   end
 
   return text
@@ -523,32 +578,23 @@ local function log_timestamp(log)
   return text
 end
 
-local function split_log_entry(entry)
-  local values = {}
-  for s, d in string.gmatch(entry, " ?([^;]+)") do
-    values[#values + 1] = s
-  end
-  return values
-end
-
 local function get_log_line(index, entry, start_time)
   local text = entry
-  local values = split_log_entry(entry)
-  local timestamp = values[1]
-  local event = values[2]
+  local timestamp = entry.timestamp
+  local event = entry.event
   local name, spell_id
   local stack, remaining_duration = "", ""
 
   if event == "HIDDEN_AURA_REMOVED" then
-    name = values[3]
-    spell_id = values[4]
-  elseif event:sub(1, 12) == "HIDDEN_AURA_" then
-    name = values[3]
-    spell_id = values[12]
-    stack = tonumber(values[5])
-    local expire_time = tonumber(values[8])
+    name = entry.name
+    spell_id = entry.spellId
+  elseif event == "HIDDEN_AURA_APPLIED" then
+    name = entry.name or ""
+    spell_id = entry.spellId or 0
+    stack = entry.applications or 0
+    local expire_time = entry.expirationTime
     if expire_time > 0 then
-      local d = expire_time - start_time - tonumber(timestamp)
+      local d = expire_time - start_time - timestamp
       local h = floor(d / 3600)
       local m = floor(d / 60 % 60)
       local s = floor(d % 60)
@@ -561,14 +607,14 @@ local function get_log_line(index, entry, start_time)
       end
     end
   else
-    return {index=index, text=entry}
+    return {index=index, text=dict_to_string(entry)}
   end
 
   if stack == 0 then
     stack = ""
   end
 
-  return {index=index, text={timestamp, event, name, spell_id, stack, remaining_duration}, spell_id=spell_id}
+  return {index=index, text={format('%.2f', timestamp), event, name, spell_id, stack, remaining_duration}, spell_id=spell_id}
 end
 
 function lf:select_log(index)

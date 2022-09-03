@@ -72,22 +72,18 @@ local function update_icon_dynamic(f)
   end
 end
 
-local function update_icon(f, spell_id)
+local function update_icon(f, instance_id)
   f.dynamic = {}
   local d = f.dynamic
   local size = db.config.icon_size
 
   d.new = GetTime()
   f:SetSize(size, size)
-  f.spell_id = spell_id
+  f.instance_id = instance_id
   f.texture:SetDesaturated(false)
 
-  values = addon_table.active_auras[spell_id]
-  if not values then
-    values = {}
-  end
-
-  local name, icon, count, dispelType, duration, expirationTime = unpack(values)
+  local aura_table = addon_table.active_auras[instance_id]
+  local name, icon, count, duration, expirationTime = aura_table.name, aura_table.icon, aura_table.applications, aura_table.duration, aura_table.expirationTime
   if not icon then
     icon = "Interface/Icons/INV_Misc_QuestionMark"
   end
@@ -189,19 +185,24 @@ local icon_pool = CreateObjectPool(create_function, reset_function)
 local icon_frames = {}
 
 function addon_table.display_frame:update()
-  -- TODO: This only needs to one once per frame after all auras have been added.
-  auras = {}
-  for spell_id, icon in pairs(icon_frames) do
-    auras[#auras + 1] = spell_id
+  -- TODO: This only needs to run once per frame after all auras have been added.
+  local auras = {}
+  for instance_id, icon in pairs(icon_frames) do
+    auras[#auras + 1] = instance_id
   end
-  sort(auras)
+  sort(auras, function(a, b)
+    if icon_frames[a].spell_id == icon_frames[b].spell_id then
+      return a < b
+    end
+    return icon_frames[a].spell_id < icon_frames[b].spell_id
+  end)
   local prev, prev_row
   local row = 0
   local icon_height = db.config.icon_size
   local icons_per_row = db.config.icons_per_row
   local row_pad, col_pad = db.config.row_padding, db.config.col_padding
-  for i, spell_id in ipairs(auras) do
-    local icon = icon_frames[spell_id]
+  for i, instance_id in ipairs(auras) do
+    local icon = icon_frames[instance_id]
     if i % icons_per_row == 1 then
       row = row + 1
     end
@@ -216,31 +217,33 @@ function addon_table.display_frame:update()
   end
 end
 
-function addon_table.display_frame:update_aura(spell_id)
+function addon_table.display_frame:update_aura(instance_id)
   if not self:IsShown() then
     return
   end
 
-  local icon = icon_frames[spell_id]
-  if addon_table.active_auras[spell_id] then
+  local icon = icon_frames[instance_id]
+  if addon_table.active_auras[instance_id] then
+    local should_update = false
     if not icon then
       icon = icon_pool:Acquire()
-      icon_frames[spell_id] = icon
+      icon_frames[instance_id] = icon
+      icon.spell_id = addon_table.active_auras[instance_id].spellId
       self:update()
     end
-    icon:update(spell_id)
+    icon:update(instance_id)
   elseif icon then
     -- The aura is not active and the icon needs to be removed.
     icon:expire()
   end
 end
 
-function addon_table.display_frame:remove_aura(spell_id)
+function addon_table.display_frame:remove_aura(instance_id)
   if not self:IsShown() then
     return
   end
 
-  local icon = icon_frames[spell_id]
+  local icon = icon_frames[instance_id]
   if icon then
     addon_table.display_frame:remove_icon(icon)
   end
@@ -248,8 +251,8 @@ end
 
 function addon_table.display_frame:remove_icon(f)
   if f then
-    if f.spell_id then
-      icon_frames[f.spell_id] = nil
+    if f.instance_id then
+      icon_frames[f.instance_id] = nil
     end
     icon_pool:Release(f)
     self:update()
@@ -261,11 +264,11 @@ function addon_table.display_frame.update_config()
     db = HiddenAuraLoggerDB
   end
 
-  addon_table.display_frame:SetPoint("BOTTOMLEFT", db.config.x_offset, db.config.y_offset)
+  addon_table.display_frame:SetPoint("TOPLEFT", db.config.x_offset, db.config.y_offset)
 
   if addon_table.active_auras then
-    for spell_id, _ in pairs(addon_table.active_auras) do
-      addon_table.display_frame:update_aura(spell_id)
+    for instance_id, _ in pairs(addon_table.active_auras) do
+      addon_table.display_frame:update_aura(instance_id)
     end
     addon_table.display_frame:update()
   end

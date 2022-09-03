@@ -12,22 +12,22 @@ addon_table.addon_version = GetAddOnMetadata(addon_name, "Version")
 
 local default_config = {
   -- Scanning
-  min_spell_id = 1,
-  max_spell_id = 380000,
+  min_instance_id = 1,
+  max_instance_id = 100000,
+  instance_id_offset = 1000,
   max_ms_per_frame = 3,
   ignore_player_spells = false,
   ignore_player_spells_in_encounter = true,
   only_encounter_spells = false,
-  scan_for_unknown_spells = true,
 
   -- Aura UI
   icon_size = 32,
-  icons_per_row = 16,
+  icons_per_row = 24,
   row_padding = 16,
   col_padding = 4,
   fade_time = 5,
   x_offset = 4,
-  y_offset = 520,
+  y_offset = -200,
 }
 
 event_frame:RegisterEvent("PLAYER_LOGIN")
@@ -46,26 +46,29 @@ local function format_out(s, ...)
   out(format(s, ...))
 end
 
-local function table_to_string(t)
-  local str = ""
-
-  for i = 1, #t do
-    if i > 1 then
-      str = str .. "; "
-    end
-    str = str .. tostring(t[i])
+local function clamp(a, min, max)
+  if a < min then
+    return min
   end
-
-  return str
+  if a > max then
+    return max
+  end
+  return a
 end
 
-local function tables_are_equal(t1, t2)
-  if #t1 ~= #t2 then
+local function dicts_are_equal(t1, t2)
+  if t1 and not t2 or t2 and not t1 then
     return false
   end
 
-  for i = 1, #t1 do
-    if t1[i] ~= t2[i] then
+  for k, v in pairs(t1) do
+    if t1.k ~= t2.k then
+      return false
+    end
+  end
+
+  for k, v in pairs(t2) do
+    if t1.k ~= t2.k then
       return false
     end
   end
@@ -91,9 +94,9 @@ local function handle_slash_cmd(message)
 
   if cmd then
     cmd(unpack(words))
-  else
-    InterfaceOptionsFrame_Show()
-    InterfaceOptionsFrame_OpenToCategory(addon_name)
+--  else
+--    InterfaceOptionsFrame_Show()
+--    InterfaceOptionsFrame_OpenToCategory(addon_name)
   end
 end
 
@@ -234,13 +237,13 @@ local function create_options()
   end
 
   add_section("Scanning")
-  add_edit_box("Minimum Spell ID", {"min_spell_id", 1, 999999})
-  add_edit_box("Maximum Spell ID", {"max_spell_id", 1, 999999})
+  add_edit_box("Minimum Aura Instance ID", {"min_instance_id", 1, 999999})
+  add_edit_box("Maximum Aura Instance ID", {"max_instance_id", 1, 999999})
+  add_edit_box("Aura Instance ID Offset", {"instance_id_offset", 1, 100000})
   add_edit_box("Maximum Milliseconds per Frame", {"max_ms_per_frame", 0, 30})
   -- add_check_box("Only Encounter Spells", "only_encounter_spells", scanner.update_config)
   add_check_box("Ignore Player Spells", "ignore_player_spells", scanner.update_config)
   add_check_box("Ignore Player Spells in Encounter", "ignore_player_spells_in_encounter", scanner.update_config)
-  add_check_box("Scan for Unknown Spells", "scan_for_unknown_spells")
 
   add_column()
   add_section("Aura Display")
@@ -281,9 +284,73 @@ function event_handlers.ZONE_CHANGED_NEW_AREA()
   logger:init()
 end
 
-function event_handlers.UNIT_AURA(unit)
+function event_handlers.UNIT_AURA(unit, aura_table)
   if unit ~= "player" then
     return
+  end
+
+  local min_instance_id, max_instance_id
+  if aura_table.addedAuras then
+    for _, t in ipairs(aura_table.addedAuras) do
+      if min_instance_id == nil or t.auraInstanceID < min_instance_id then
+        min_instance_id = t.auraInstanceID
+      end
+      if max_instance_id == nil or t.auraInstanceID > max_instance_id then
+        max_instance_id = t.auraInstanceID
+      end
+    end
+  else
+    -- If there aren't any new auras to use to update the instance, just increment because new hidden auras may have been applied.
+    max_instance_id = scanner.max_instance_id + db.config.instance_id_offset
+  end
+
+  if aura_table.updatedAuraInstanceIDs then
+    for _, id in ipairs(aura_table.updatedAuraInstanceIDs) do
+      if min_instance_id == nil or id < min_instance_id then
+        min_instance_id = id
+      end
+      if max_instance_id == nil or id > max_instance_id then
+        max_instance_id = id
+      end
+    end
+  end
+
+  if aura_table.removedAuraInstanceIDs then
+    for _, id in ipairs(aura_table.removedAuraInstanceIDs) do
+      if min_instance_id == nil or id < min_instance_id then
+        min_instance_id = id
+      end
+      if max_instance_id == nil or id > max_instance_id then
+        max_instance_id = id
+      end
+    end
+  end
+
+  if min_instance_id then
+    local new_min = min_instance_id - db.config.instance_id_offset
+    if scanner.running then
+      -- If a scan is in progress, don't move the minimum in such a way that would cause problems.
+      if scanner.instance_id <= new_min then
+        scanner.min_local_instance_id = new_min
+      end
+    else
+      scanner.min_local_instance_id = new_min
+    end
+  end
+
+  if max_instance_id then
+    local new_max = max_instance_id + db.config.instance_id_offset
+    if scanner.running then
+      -- If a scan is in progress, don't move the maximum in such a way that would cause problems.
+      if scanner.instance_id >= new_max then
+        scanner.max_local_instance_id = new_max
+      end
+    else
+      scanner.max_local_instance_id = new_max
+    end
+    if new_max > scanner.max_instance_id then
+      scanner.max_instance_id = new_max
+    end
   end
 
   -- Start the scanner to search for any hidden auras that have changed.
@@ -296,10 +363,10 @@ function event_handlers.COMBAT_LOG_EVENT_UNFILTERED()
   if dest_guid == player_guid and event:sub(1, 10) == "SPELL_AURA" and not scanner.cleu_auras[spell_id] then
     -- If there was a combat log event for this aura, this addon will begin to ignore it.
     scanner.cleu_auras[spell_id] = true
-    if addon_table.active_auras[spell_id] then
-      addon_table.active_auras[spell_id] = nil
-      addon_table.display_frame:remove_aura(spell_id)
-    end
+--    if addon_table.active_auras[spell_id] then
+--      addon_table.active_auras[spell_id] = nil
+--      addon_table.display_frame:remove_aura(spell_id)
+--    end
   end
 end
 
@@ -312,13 +379,6 @@ function event_handlers.ENCOUNTER_START(encounter_id, encounter_name, difficulty
   })
 
   scanner.encounter_id = encounter_id
-  scanner.encounter_auras = {}
-
-  if addon_table.encounter_spells[encounter_id] then
-    for spell_id, _ in pairs(addon_table.encounter_spells[encounter_id]) do
-      scanner.encounter_auras[#scanner.encounter_auras + 1] = spell_id
-    end
-  end
 
   scanner:run()
 end
@@ -326,7 +386,6 @@ end
 function event_handlers.ENCOUNTER_END()
   logger:init()
   scanner.encounter_id = nil
-  scanner.encounter_auras = {}
 end
 
 function logger:init(encounter)
@@ -353,8 +412,9 @@ function logger:init(encounter)
   self.log = db.logs[#db.logs]
 end
 
-function logger:write(str)
-  self.log.events[#self.log.events + 1] = format("%.3f; %s", GetTime() - self.log.time, str)
+function logger:write(t)
+  t['timestamp'] = GetTime() - self.log.time
+  self.log.events[#self.log.events + 1] = t
 end
 
 function logger:found_aura(spell_id, name)
@@ -366,12 +426,13 @@ function logger:found_aura(spell_id, name)
 end
 
 function scanner:reset()
-  self.spell_id = db.config.min_spell_id
-  self.known_index = 0
-  self.encounter_index = 0
-  self.known_aura_lookup = {}
-  self.known_auras = {}
-  self.encounter_auras = {}
+  self.min_instance_id = db.config.min_instance_id
+  self.max_instance_id = db.config.max_instance_id
+  self.min_local_instance_id = 0
+  self.max_local_instance_id = 0
+  self.instance_id = self.min_instance_id
+  self.local_instance_id = self.min_local_instance_id
+  self.active_index = 0
   self.encounter_id = nil
   self.cleu_auras = {}
   addon_table.active_auras = {}
@@ -379,69 +440,81 @@ function scanner:reset()
 end
 
 function scanner:run()
-  self.spell_id_finish = 0
-  self.known_index_finish = 0
-  self.encounter_index_finish = 0
+  self.active_index_finish = 0
+  self.local_instance_id_finish = 0
+  self.instance_id_finish = 0
 
-  if self.known_index == 0 then
-    self.known_index = #self.known_auras
+  if not self.running then
+    self.local_instance_id = clamp(self.local_instance_id, self.min_local_instance_id, self.max_local_instance_id)
   end
 
-  if self.encounter_index == 0 then
-    self.encounter_index = #self.encounter_auras
+  self.active_aura_list = {}
+  for i, _ in pairs(addon_table.active_auras) do
+    self.active_aura_list[#self.active_aura_list + 1] = i
   end
+  self.active_index = #self.active_aura_list
 
   -- this is for throttling how quickly events are scanned
   event_frame:SetScript("OnUpdate", function() self:scan() end)
+  self.running = true
 end
 
 function scanner:stop()
   event_frame:SetScript("OnUpdate", nil)
+  self.running = false
 end
 
-function scanner:check_aura(spell_id)
-  -- Skip auras that appear in combat log events. The goal of this
-  -- addon is to collect data for any auras that do not appear in
-  -- combat logs. There may be some hidden auras that do appear in
-  -- the combat log and there may be some visible auras that do not
-  -- appear in the combat log.
-  if self.cleu_auras[spell_id] then
-    return
+function scanner:check_aura(instance_id)
+  local aura_table = C_UnitAuras.GetAuraDataByAuraInstanceID("player", instance_id)
+
+  if aura_table then
+    if (db.config.ignore_player_spells or db.config.ignore_player_spells_in_encounter and self.encounter_id) and addon_table:is_player_spell(aura_table.spellId) then
+      return
+    end
+
+    if db.config.only_encounter_spells and not addon_table:is_encounter_spell(self.encounter_id, aura_table.spellId) then
+      return
+    end
+
+    -- Skip auras that appear in combat log events. The goal of this
+    -- addon is to collect data for any auras that do not appear in
+    -- combat logs. There may be some hidden auras that do appear in
+    -- the combat log and there may be some visible auras that do not
+    -- appear in the combat log.
+    if self.cleu_auras[aura_table.spellId] then
+      return
+    end
   end
 
-  if (db.config.ignore_player_spells or db.config.ignore_player_spells_in_encounter and self.encounter_id) and addon_table:is_player_spell(spell_id) then
-    return
-  end
-
-  if db.config.only_encounter_spells and not addon_table:is_encounter_spell(self.encounter_id, spell_id) then
-    return
-  end
-
-  local values = {GetPlayerAuraBySpellID(spell_id)}
-
-  -- If GetPlayerAuraBySpellID returned something, then this aura is active.
-  if #values > 0 then
+  -- If GetAuraDataByAuraInstanceID returned something, then this aura is active.
+  if aura_table and aura_table.spellId then
     -- If the aura was not already active, it was either just applied or we are detecting it for the first time here.
-    if not addon_table.active_auras[spell_id] then
-      addon_table.active_auras[spell_id] = values
-      addon_table.display_frame:update_aura(spell_id)
-      logger:write(format("%s; %s", self.known_aura_lookup[spell_id] and "HIDDEN_AURA_APPLIED" or "HIDDEN_AURA_FOUND", table_to_string(values)))
-      if not self.known_aura_lookup[spell_id] then
-        logger:found_aura(spell_id, values[1])
-        self.known_aura_lookup[spell_id] = true
-        self.known_auras[#self.known_auras + 1] = spell_id
+    if not addon_table.active_auras[instance_id] then
+      addon_table.active_auras[instance_id] = aura_table
+      addon_table.display_frame:update_aura(instance_id)
+      aura_table.event = "HIDDEN_AURA_APPLIED"
+      logger:write(aura_table)
+      if not logger.log.found_auras or not logger.log.found_auras[aura_table.spellId] then
+        logger:found_aura(aura_table.spellId, aura_table.name)
       end
     -- If the aura was active, check if anything about it changed (i.e., was the aura refreshed?).
-    elseif not tables_are_equal(addon_table.active_auras[spell_id], values) then
-      addon_table.active_auras[spell_id] = values
-      addon_table.display_frame:update_aura(spell_id)
-      logger:write(format("HIDDEN_AURA_UPDATED; %s", table_to_string(values)))
+    elseif not dicts_are_equal(addon_table.active_auras[instance_id], aura_table) then
+      addon_table.active_auras[instance_id] = aura_table
+      addon_table.display_frame:update_aura(instance_id)
+      aura_table.event = "HIDDEN_AURA_UPDATED"
+      logger:write(aura_table)
     end
   -- If the aura was active, then it just faded from the player.
-  elseif addon_table.active_auras[spell_id] then
-    logger:write(format("HIDDEN_AURA_REMOVED; %s; %d", addon_table.active_auras[spell_id][1], spell_id))
-    addon_table.active_auras[spell_id] = nil
-    addon_table.display_frame:update_aura(spell_id)
+  elseif addon_table.active_auras[instance_id] then
+    local t = {
+      event = "HIDDEN_AURA_REMOVED",
+      instance_id = instance_id,
+      spellId = addon_table.active_auras[instance_id].spellId,
+      name = addon_table.active_auras[instance_id].name,
+    }
+    logger:write(t)
+    addon_table.active_auras[instance_id] = nil
+    addon_table.display_frame:update_aura(instance_id)
   end
 end
 
@@ -461,16 +534,16 @@ function scanner:out_of_time()
   return t >= self.stop_time or t < self.start_time
 end
 
-function scanner:check_range(key, finish, min, max, spell_table, ignore_func)
+function scanner:check_range(key, finish, min, max, instance_table, ignore_func)
   if max < min then
     return
   end
 
   while self[key] ~= self[finish] and not self:out_of_time() do
-    local spell_id = spell_table and spell_table[self[key]] or self[key]
+    local instance_id = instance_table and instance_table[self[key]] or self[key]
 
-    if not ignore_func or not ignore_func(spell_id) then
-      self:check_aura(spell_id)
+    if not ignore_func or not ignore_func(instance_id) then
+      self:check_aura(instance_id)
     end
 
     self:increment(key, finish, min, max)
@@ -478,36 +551,29 @@ function scanner:check_range(key, finish, min, max, spell_table, ignore_func)
 end
 
 function scanner:scan()
-  -- Because we are interested in checking potentially hundreds of thousands
-  -- of possible auras each time a UNIT_AURA event fires, we need to throttle
-  -- the number of auras that can be checked each frame to limit CPU usage.
+  -- Even though we probably don't need to check many auras per UNIT_AURA event thanks to
+  -- characteristics of instance IDs, this code allows for the requests to be throttled if needed.
   self.start_time = debugprofilestop()
   self.stop_time = self.start_time + db.config.max_ms_per_frame
 
-  -- First, check auras that have been detected on the player before. This ensures
+  -- First, check instances that are already active on the player. This ensures
   -- that the log is very responsive when reporting changes about these auras.
-  self:check_range("known_index", "known_index_finish", 1, #self.known_auras, self.known_auras)
 
-  -- Next, check encounter spells if given for the active encounter.
-  self:check_range("encounter_index", "encounter_index_finish", 1, #self.encounter_auras, self.encounter_auras,
-    -- ignore_func to skip spells that were checked above in self.known_auras
-    function(s) return self.known_aura_lookup[s] end)
+  self:check_range("active_index", "active_index_finish", 1, #self.active_aura_list, self.active_aura_list)
 
-  if db.config.scan_for_unknown_spells then
-    -- Check all other auras in range for new hidden auras.
-    self:check_range("spell_id", "spell_id_finish", db.config.min_spell_id, db.config.max_spell_id, nil,
-      -- ignore_func to skip spells that were checked above in self.known_auras and self.encounter_auras
-      function(s) return self.known_aura_lookup[self.spell_id] or addon_table:is_encounter_spell(self.encounter_id, self.spell_id) end)
+  -- Check auras that are locally close to recent IDs given by UNIT_AURA to detect new hidden auras.
+  self:check_range("local_instance_id", "local_instance_id_finish", self.min_local_instance_id, self.max_local_instance_id, nil,
+    -- ignore_func to skip spells that were checked above in addon_table.active_auras
+    function(s) return addon_table.active_auras[s] end)
 
-    -- Stop after a full loop through all spells with no new UNIT_AURA events.
-    if self.spell_id == self.spell_id_finish then
-      self:stop()
-    end
-  else
-    -- If we are not looking for unknown spells, stop after all known and encounter spells have been checked.
-    if self.known_index == self.known_index_finish and self.encounter_index == self.encounter_index_finish then
-      self:stop()
-    end
+  -- Check all other auras in range for new hidden auras.
+  self:check_range("instance_id", "instance_id_finish", self.min_instance_id, self.max_instance_id, nil,
+    -- ignore_func to skip spells that were checked above in addon_table.active_auras and spells checked in the local range above
+    function(s) return addon_table.active_auras[s] or s > self.min_local_instance_id and s < self.max_local_instance_id end)
+
+  -- Stop after a full loop through all spells with no new UNIT_AURA events.
+  if self.instance_id == self.instance_id_finish then
+    self:stop()
   end
 end
 
@@ -520,15 +586,16 @@ function scanner.update_config()
     db = HiddenAuraLoggerDB
   end
 
-  for spell_id, _ in pairs(addon_table.active_auras) do
-    if (db.config.ignore_player_spells or db.config.ignore_player_spells_in_encounter and scanner.encounter_id) and addon_table:is_player_spell(spell_id) then
-      addon_table.active_auras[spell_id] = nil
-      addon_table.display_frame:remove_aura(spell_id)
+  for instance_id, _ in pairs(addon_table.active_auras) do
+    local aura_table = addon_table.active_auras[instance_id]
+    if (db.config.ignore_player_spells or db.config.ignore_player_spells_in_encounter and scanner.encounter_id) and addon_table:is_player_spell(aura_table.spellId) then
+      addon_table.active_auras[instance_id] = nil
+      addon_table.display_frame:remove_aura(instance_id)
     end
 
-    if db.config.only_encounter_spells and not addon_table:is_encounter_spell(scanner.encounter_id, spell_id) then
-      addon_table.active_auras[spell_id] = nil
-      addon_table.display_frame:remove_aura(spell_id)
+    if db.config.only_encounter_spells and not addon_table:is_encounter_spell(scanner.encounter_id, aura_table.spellId) then
+      addon_table.active_auras[instance_id] = nil
+      addon_table.display_frame:remove_aura(instance_id)
     end
   end
 
