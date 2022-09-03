@@ -22,7 +22,7 @@ local default_config = {
 
   -- Aura UI
   icon_size = 32,
-  icons_per_row = 24,
+  icons_per_row = 12,
   row_padding = 16,
   col_padding = 4,
   fade_time = 5,
