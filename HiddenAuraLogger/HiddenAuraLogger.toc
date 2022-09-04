@@ -1,7 +1,7 @@
 ## Interface: 100000
 ## Title: HiddenAuraLogger
 ## Author: Dorovon
-## Version: 2.0.0
+## Version: 2.0.3
 ## SavedVariables: HiddenAuraLoggerDB
 
 spell_lists.lua
