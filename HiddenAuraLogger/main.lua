@@ -530,27 +530,29 @@ function scanner:check_range(key, finish, min, max, instance_table, ignore_func)
 end
 
 function scanner:scan()
-  -- Even though we probably don't need to check many auras per UNIT_AURA event thanks to
-  -- characteristics of instance IDs, this code allows for the requests to be throttled if needed.
+  -- To allow such a large number of possible instance IDs to be scanned, throttle the scanner
+  -- by only allowing it to run for up to db.config.max_ms_per_frame milliseconds per frame.
   self.start_time = debugprofilestop()
   self.stop_time = self.start_time + db.config.max_ms_per_frame
 
-  -- First, check instances that are already active on the player. This ensures
+  -- Phase 1: Check instances that are already active on the player. This ensures
   -- that the log is very responsive when reporting changes about these auras.
-
+  -- This will generally complete during the first frame of a new scan.
   self:check_range("active_index", "active_index_finish", 1, #self.active_aura_list, self.active_aura_list)
 
-  -- Check auras that are locally close to recent IDs given by UNIT_AURA to detect new hidden auras.
+  -- Phase 2: Check possible instances that are locally close to recent visible instances to detect new hidden auras.
+  -- This will generally take at least a few frames to complete and will successfully detect most newly applied hidden auras.
   self:check_range("local_instance_id", "local_instance_id_finish", self.min_local_instance_id, self.max_local_instance_id, nil,
     -- ignore_func to skip spells that were checked above in addon_table.active_auras
     function(s) return addon_table.active_auras[s] end)
 
-  -- Check all other auras in range for new hidden auras.
+  -- Phase 3: Check all other auras in range for new hidden auras.
+  -- This will genreally always be running in the background to look for additional hidden auras.
   self:check_range("instance_id", "instance_id_finish", self.min_instance_id, self.max_instance_id, nil,
     -- ignore_func to skip spells that were checked above in addon_table.active_auras and spells checked in the local range above
     function(s) return addon_table.active_auras[s] or s > self.min_local_instance_id and s < self.max_local_instance_id end)
 
-  -- Stop after a full loop through all spells with no new UNIT_AURA events.
+  -- Stop after a full loop through all possible instance IDs in Phase 3 with no new UNIT_AURA events.
   if self.instance_id == self.instance_id_finish then
     self:stop()
   end
