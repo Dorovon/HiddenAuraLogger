@@ -301,33 +301,12 @@ function event_handlers.UNIT_AURA(unit, aura_table)
     end
   else
     -- If there aren't any new auras to use to update the instance, just increment because new hidden auras may have been applied.
-    max_instance_id = scanner.max_instance_id + db.config.instance_id_offset
-  end
-
-  if aura_table.updatedAuraInstanceIDs then
-    for _, id in ipairs(aura_table.updatedAuraInstanceIDs) do
-      if min_instance_id == nil or id < min_instance_id then
-        min_instance_id = id
-      end
-      if max_instance_id == nil or id > max_instance_id then
-        max_instance_id = id
-      end
-    end
-  end
-
-  if aura_table.removedAuraInstanceIDs then
-    for _, id in ipairs(aura_table.removedAuraInstanceIDs) do
-      if min_instance_id == nil or id < min_instance_id then
-        min_instance_id = id
-      end
-      if max_instance_id == nil or id > max_instance_id then
-        max_instance_id = id
-      end
-    end
+    -- TODO: There is still no guarantee new hidden auras will be in this range.
+    max_instance_id = scanner.max_local_instance_id + db.config.instance_id_offset
   end
 
   if min_instance_id then
-    local new_min = min_instance_id - db.config.instance_id_offset
+    local new_min = clamp(min_instance_id - db.config.instance_id_offset, 0, 4294967295) -- anything outside of this range is invalid
     if scanner.running then
       -- If a scan is in progress, don't move the minimum in such a way that would cause problems.
       if scanner.instance_id <= new_min then
@@ -339,7 +318,7 @@ function event_handlers.UNIT_AURA(unit, aura_table)
   end
 
   if max_instance_id then
-    local new_max = max_instance_id + db.config.instance_id_offset
+    local new_max = clamp(max_instance_id + db.config.instance_id_offset, 0, 4294967295) -- anything outside of this range is invalid
     if scanner.running then
       -- If a scan is in progress, don't move the maximum in such a way that would cause problems.
       if scanner.instance_id >= new_max then
